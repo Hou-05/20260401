@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>極簡五子棋 - 音效增強版</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            background-color: #f3f4f6;
+            touch-action: manipulation;
+        }
+        canvas {
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+            max-width: 100%;
+            height: auto;
+            cursor: crosshair;
+        }
+        .wood-bg {
+            background-color: #deb887;
+            background-image: url("https://www.transparenttextures.com/patterns/wood-pattern.png");
+        }
+        .toggle-checkbox:checked {
+            right: 0;
+            border-color: #4c51bf;
+        }
+        .toggle-checkbox:checked + .toggle-label {
+            background-color: #4c51bf;
+        }
+    </style>
+</head>
+<body class="flex flex-col items-center justify-center min-h-screen p-4">
+
+    <!-- 遊戲標題與狀態 -->
+    <div class="mb-4 text-center">
+        <h1 class="text-4xl font-bold text-gray-800 mb-2">五子棋 Gomoku</h1>
+        
+        <!-- 模式切換 -->
+        <div class="flex items-center justify-center gap-3 mb-4">
+            <span class="text-sm font-medium text-gray-700">雙人對弈</span>
+            <div class="relative inline-block w-12 mr-2 align-middle select-none transition duration-200 ease-in">
+                <input type="checkbox" name="toggle" id="modeToggle" class="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer outline-none transition-all duration-300"/>
+                <label for="modeToggle" class="toggle-label block overflow-hidden h-6 rounded-full bg-gray-300 cursor-pointer"></label>
+            </div>
+            <span class="text-sm font-medium text-gray-700">人機對戰 (AI)</span>
+        </div>
+
+        <div id="status" class="text-xl font-medium text-blue-600 h-8">
+            點擊棋盤開始遊戲
+        </div>
+    </div>
+
+    <!-- 棋盤容器 -->
+    <div class="relative inline-block p-2 bg-gray-300 rounded-lg shadow-inner">
+        <canvas id="board" width="600" height="600" class="wood-bg rounded shadow-lg"></canvas>
+    </div>
+
+    <!-- 控制按鈕 -->
+    <div class="mt-6 flex gap-4">
+        <button id="undoBtn" class="px-6 py-2 bg-amber-600 text-white rounded-full hover:bg-amber-700 transition-colors shadow-md disabled:opacity-50">
+            悔棋
+        </button>
+        <button id="resetBtn" class="px-6 py-2 bg-gray-800 text-white rounded-full hover:bg-black transition-colors shadow-md">
+            重新開始
+        </button>
+    </div>
+
+    <!-- 勝利彈窗 -->
+    <div id="modal" class="fixed inset-0 bg-black bg-opacity-50 hidden flex items-center justify-center z-50">
+        <div class="bg-white p-8 rounded-2xl text-center shadow-2xl transform scale-110">
+            <h2 id="winnerMsg" class="text-3xl font-bold mb-6 text-gray-800">黑子獲勝！</h2>
+            <button onclick="resetGame()" class="px-8 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-all font-semibold">
+                再玩一局
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // --- 音效引擎 (Web Audio API) ---
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+        function playSound(type) {
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+
+            const now = audioCtx.currentTime;
+
+            if (type === 'place') {
+                // 模擬棋子落下的清脆聲 (短促的高頻)
+                oscillator.type = 'sine';
+                oscillator.frequency.setValueAtTime(800, now);
+                oscillator.frequency.exponentialRampToValueAtTime(100, now + 0.1);
+                gainNode.gain.setValueAtTime(0.3, now);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+                oscillator.start(now);
+                oscillator.stop(now + 0.1);
+            } else if (type === 'win') {
+                // 勝利樂句 (和弦)
+                const freqs = [523.25, 659.25, 783.99, 1046.50]; // C5, E5, G5, C6
+                freqs.forEach((f, i) => {
+                    const osc = audioCtx.createOscillator();
+                    const g = audioCtx.createGain();
+                    osc.connect(g);
+                    g.connect(audioCtx.destination);
+                    osc.frequency.setValueAtTime(f, now + i * 0.1);
+                    g.gain.setValueAtTime(0, now + i * 0.1);
+                    g.gain.linearRampToValueAtTime(0.2, now + i * 0.1 + 0.05);
+                    g.gain.exponentialRampToValueAtTime(0.01, now + i * 0.1 + 0.5);
+                    osc.start(now + i * 0.1);
+                    osc.stop(now + i * 0.1 + 0.6);
+                });
+            } else if (type === 'hint') {
+                // 聽牌提示音
+                oscillator.type = 'triangle';
+                oscillator.frequency.setValueAtTime(440, now);
+                gainNode.gain.setValueAtTime(0.1, now);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
+                oscillator.start(now);
+                oscillator.stop(now + 0.2);
+            } else if (type === 'ui') {
+                // 按鈕點擊音
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(150, now);
+                gainNode.gain.setValueAtTime(0.05, now);
+                gainNode.gain.linearRampToValueAtTime(0, now + 0.05);
+                oscillator.start(now);
+                oscillator.stop(now + 0.05);
+            }
+        }
+
+        const canvas = document.getElementById('board');
+        const ctx = canvas.getContext('2d');
+        const statusDisplay = document.getElementById('status');
+        const modal = document.getElementById('modal');
+        const winnerMsg = document.getElementById('winnerMsg');
+        const undoBtn = document.getElementById('undoBtn');
+        const modeToggle = document.getElementById('modeToggle');
+
+        const GRID_SIZE = 15;
+        const PADDING = 30;
+        const CELL_SIZE = (canvas.width - PADDING * 2) / (GRID_SIZE - 1);
+        
+        let board = [];
+        let history = [];
+        let currentPlayer = 1; // 1: 黑, 2: 白
+        let gameOver = false;
+        let isAiMode = false;
+        let readyToWinPoints = [];
+
+        function initBoard() {
+            board = Array(GRID_SIZE).fill().map(() => Array(GRID_SIZE).fill(0));
+            history = [];
+            currentPlayer = 1;
+            gameOver = false;
+            readyToWinPoints = [];
+            isAiMode = modeToggle.checked;
+            updateStatus();
+            drawBoard();
+        }
+
+        function updateReadyToWinPoints() {
+            const oldReadyCount = readyToWinPoints.length;
+            readyToWinPoints = [];
+            if (gameOver) return;
+            for (let r = 0; r < GRID_SIZE; r++) {
+                for (let c = 0; c < GRID_SIZE; c++) {
+                    if (board[r][c] === 0 && checkWinPotential(r, c, currentPlayer)) {
+                        readyToWinPoints.push({r, c});
+                    }
+                }
+            }
+            // 如果出現新的聽牌點且輪到玩家，播放提示音
+            if (readyToWinPoints.length > oldReadyCount && (!isAiMode || currentPlayer === 1)) {
+                playSound('hint');
+            }
+        }
+
+        function drawBoard() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.beginPath();
+            ctx.strokeStyle = '#4a3728';
+            ctx.lineWidth = 1;
+            for (let i = 0; i < GRID_SIZE; i++) {
+                ctx.moveTo(PADDING, PADDING + i * CELL_SIZE);
+                ctx.lineTo(canvas.width - PADDING, PADDING + i * CELL_SIZE);
+                ctx.moveTo(PADDING + i * CELL_SIZE, PADDING);
+                ctx.lineTo(PADDING + i * CELL_SIZE, canvas.height - PADDING);
+            }
+            ctx.stroke();
+
+            const spots = [3, 7, 11];
+            spots.forEach(r => {
+                spots.forEach(c => {
+                    ctx.beginPath();
+                    ctx.arc(PADDING + c * CELL_SIZE, PADDING + r * CELL_SIZE, 4, 0, Math.PI * 2);
+                    ctx.fillStyle = '#4a3728';
+                    ctx.fill();
+                });
+            });
+
+            readyToWinPoints.forEach(pt => {
+                const x = PADDING + pt.c * CELL_SIZE;
+                const y = PADDING + pt.r * CELL_SIZE;
+                ctx.beginPath();
+                ctx.arc(x, y, CELL_SIZE * 0.3, 0, Math.PI * 2);
+                ctx.fillStyle = currentPlayer === 1 ? 'rgba(0, 0, 0, 0.2)' : 'rgba(255, 255, 255, 0.4)';
+                ctx.fill();
+            });
+
+            for (let r = 0; r < GRID_SIZE; r++) {
+                for (let c = 0; c < GRID_SIZE; c++) {
+                    if (board[r][c] !== 0) drawPiece(r, c, board[r][c]);
+                }
+            }
+
+            if (history.length > 0) {
+                const last = history[history.length - 1];
+                ctx.beginPath();
+                ctx.arc(PADDING + last.c * CELL_SIZE, PADDING + last.r * CELL_SIZE, 3, 0, Math.PI * 2);
+                ctx.fillStyle = last.player === 1 ? '#ffffff' : '#ff0000';
+                ctx.fill();
+            }
+            undoBtn.disabled = history.length === 0 || gameOver || (isAiMode && currentPlayer === 2);
+        }
+
+        function drawPiece(r, c, player) {
+            const x = PADDING + c * CELL_SIZE;
+            const y = PADDING + r * CELL_SIZE;
+            const radius = CELL_SIZE * 0.42;
+            ctx.beginPath();
+            ctx.arc(x, y, radius, 0, Math.PI * 2);
+            const gradient = ctx.createRadialGradient(x - radius/3, y - radius/3, radius/10, x, y, radius);
+            if (player === 1) {
+                gradient.addColorStop(0, '#555'); gradient.addColorStop(1, '#000');
+            } else {
+                gradient.addColorStop(0, '#fff'); gradient.addColorStop(1, '#ccc');
+            }
+            ctx.fillStyle = gradient;
+            ctx.shadowBlur = 4; ctx.shadowColor = "rgba(0,0,0,0.3)";
+            ctx.shadowOffsetX = 2; ctx.shadowOffsetY = 2;
+            ctx.fill();
+            ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
+        }
+
+        function handleClick(e) {
+            if (gameOver) return;
+            if (isAiMode && currentPlayer === 2) return;
+
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+            const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+            const c = Math.round((x - PADDING) / CELL_SIZE);
+            const r = Math.round((y - PADDING) / CELL_SIZE);
+
+            if (r >= 0 && r < GRID_SIZE && c >= 0 && c < GRID_SIZE && board[r][c] === 0) {
+                placePiece(r, c);
+            }
+        }
+
+        function placePiece(r, c) {
+            board[r][c] = currentPlayer;
+            history.push({r, c, player: currentPlayer});
+            playSound('place');
+            
+            if (checkWinPotential(r, c, currentPlayer)) {
+                gameOver = true;
+                drawBoard();
+                playSound('win');
+                showWinner(currentPlayer);
+                return;
+            }
+
+            currentPlayer = currentPlayer === 1 ? 2 : 1;
+            updateReadyToWinPoints();
+            updateStatus();
+            drawBoard();
+
+            if (isAiMode && currentPlayer === 2 && !gameOver) {
+                setTimeout(aiMove, 600);
+            }
+        }
+
+        function aiMove() {
+            if (gameOver) return;
+            let bestScore = -1;
+            let move = {r: 7, c: 7};
+
+            for (let r = 0; r < GRID_SIZE; r++) {
+                for (let c = 0; c < GRID_SIZE; c++) {
+                    if (board[r][c] === 0) {
+                        let score = evaluatePoint(r, c);
+                        if (score > bestScore) {
+                            bestScore = score;
+                            move = {r, c};
+                        }
+                    }
+                }
+            }
+            placePiece(move.r, move.c);
+        }
+
+        function evaluatePoint(r, c) {
+            const scoreAI = getPointScore(r, c, 2);
+            const scoreHuman = getPointScore(r, c, 1);
+            return Math.max(scoreAI, scoreHuman * 0.95);
+        }
+
+        function getPointScore(r, c, player) {
+            let totalScore = 0;
+            const directions = [[0, 1], [1, 0], [1, 1], [1, -1]];
+            for (let [dr, dc] of directions) {
+                let line = "";
+                for (let i = -4; i <= 4; i++) {
+                    if (i === 0) { line += "P"; continue; }
+                    const nr = r + dr * i, nc = c + dc * i;
+                    if (nr < 0 || nr >= GRID_SIZE || nc < 0 || nc >= GRID_SIZE) line += "X";
+                    else if (board[nr][nc] === player) line += "M";
+                    else if (board[nr][nc] === 0) line += "E";
+                    else line += "O";
+                }
+                if (line.includes("MMMMP")) totalScore += 100000;
+                if (line.includes("EMMMP") || line.includes("MMMP E")) totalScore += 10000;
+                if (line.includes("EMMP E") || line.includes("E MPME")) totalScore += 1000;
+                if (line.includes("EM P E")) totalScore += 100;
+            }
+            return totalScore;
+        }
+
+        function checkWinPotential(r, c, player) {
+            const directions = [[0, 1], [1, 0], [1, 1], [1, -1]];
+            for (let [dr, dc] of directions) {
+                let count = 1;
+                for (let i = 1; i < 5; i++) {
+                    const nr = r + dr * i, nc = c + dc * i;
+                    if (nr >= 0 && nr < GRID_SIZE && nc >= 0 && nc < GRID_SIZE && board[nr][nc] === player) count++;
+                    else break;
+                }
+                for (let i = 1; i < 5; i++) {
+                    const nr = r - dr * i, nc = c - dc * i;
+                    if (nr >= 0 && nr < GRID_SIZE && nc >= 0 && nc < GRID_SIZE && board[nr][nc] === player) count++;
+                    else break;
+                }
+                if (count >= 5) return true;
+            }
+            return false;
+        }
+
+        function updateStatus() {
+            if (gameOver) return;
+            const text = currentPlayer === 1 ? '輪到黑子下棋' : (isAiMode ? '電腦思考中...' : '輪到白子下棋');
+            statusDisplay.textContent = text;
+            statusDisplay.className = `text-xl font-medium h-8 ${currentPlayer === 1 ? 'text-gray-900' : 'text-blue-600'}`;
+        }
+
+        function showWinner(player) {
+            winnerMsg.textContent = player === 1 ? '黑子獲勝！' : '白子獲勝！';
+            winnerMsg.className = `text-3xl font-bold mb-6 ${player === 1 ? 'text-black' : 'text-gray-600'}`;
+            modal.classList.remove('hidden');
+        }
+
+        function undo() {
+            if (history.length > 0 && !gameOver) {
+                playSound('ui');
+                const steps = (isAiMode && history.length >= 2) ? 2 : 1;
+                for(let i=0; i<steps; i++) {
+                    const last = history.pop();
+                    board[last.r][last.c] = 0;
+                    currentPlayer = last.player;
+                }
+                updateReadyToWinPoints();
+                updateStatus();
+                drawBoard();
+            }
+        }
+
+        function resetGame() {
+            playSound('ui');
+            modal.classList.add('hidden');
+            initBoard();
+        }
+
+        canvas.addEventListener('click', handleClick);
+        document.getElementById('resetBtn').addEventListener('click', resetGame);
+        undoBtn.addEventListener('click', undo);
+        modeToggle.addEventListener('change', () => {
+            playSound('ui');
+            resetGame();
+        });
+
+        initBoard();
+    </script>
+</body>
+</html>
